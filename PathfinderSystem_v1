@@ -1,0 +1,125 @@
+-- Self variables
+local char = script.Parent
+local charHum = script.Parent.Humanoid
+local charHRP = script.Parent.HumanoidRootPart
+
+-- Quick-call variables
+local run = game:GetService("RunService")
+local tween = game:GetService("TweenService")
+local players = game:GetService("Players")
+
+-- Module call
+local pathfinderModule = require(char.PathfinderModuleObjVal.Value)
+
+-- Event call
+local pathfinderModuleEvent = char.PathfinderModuleEventObjVal.Value
+
+-- Testing variables
+local isTest = true
+local START = charHRP.Position
+local GOAL = workspace.GOAL.Position
+
+-- Config variables
+local config = char.PathfinderConfig
+local configtable = {}
+for i, v in pairs(config:GetChildren()) do
+	configtable[v.Name] = v.Value
+end
+
+-- Expiremental variables
+local flexibleSpacing = false -- Makes waypoint spacing flexible in relation to distance from goal
+local maxSpacing = 15 -- Only applicable if flexibleSpacing is true
+
+-- Flag variables
+local isCurrentlyPathing = false
+local numberOfPaths = 0
+local maxNumberOfPaths = 1
+
+-- Regular variables
+local distanceFromGoal = nil
+
+-- Find player to go to
+local closestPlayer, closestPlayerDistance 
+local function findClosestPlayer(FROM)
+	local closestPlayer = nil
+	local closestDistance = math.huge
+
+	for _, player in pairs(players:GetPlayers()) do
+		local character = player.Character
+		if character and character.PrimaryPart then
+			local distance = (character.PrimaryPart.Position - FROM).Magnitude
+			if distance < closestDistance then
+				closestDistance = distance
+				closestPlayer = player
+			end
+		end
+	end
+
+	return closestPlayer, closestDistance
+end
+
+local function setNetworkOwnerOfModel(MODEL, OWNER)
+	for _, descendant in pairs(MODEL:GetDescendants()) do
+		-- Go through each part of the model
+		if descendant:IsA("BasePart") then
+			-- Try to set the network owner
+			local success, errorReason = descendant:CanSetNetworkOwnership()
+			if success then
+				descendant:SetNetworkOwner(OWNER)
+			else
+				-- Sometimes this can fail, so throw an error to prevent
+				-- ... mixed networkownership in the 'model'
+				error(errorReason)
+			end
+		end
+	end
+end
+
+
+while task.wait(0.1) do -- Makeshift run service to optimise run time
+	-- Recall variables in case of movement
+	START = charHRP.Position
+	closestPlayer, closestPlayerDistance = findClosestPlayer(START)
+
+	if closestPlayer then
+		GOAL = closestPlayer.Character.PrimaryPart.Position
+	else
+		GOAL = workspace.GOAL.Position
+	end
+
+	distanceFromGoal = (START - GOAL).Magnitude
+
+	if configtable and flexibleSpacing then
+		if distanceFromGoal < maxSpacing then
+			configtable["WaypointSpacing"] = distanceFromGoal / 2
+		else
+			configtable["WaypointSpacing"] = maxSpacing
+		end
+	end
+
+	if  numberOfPaths  == 0 then
+		isCurrentlyPathing = false
+	end
+
+	if not isCurrentlyPathing and distanceFromGoal > 5 and numberOfPaths <= maxNumberOfPaths then
+		--warn("Pathfinding")
+		isCurrentlyPathing = true
+		setNetworkOwnerOfModel(char, nil)
+		local path = pathfinderModule.PathTo(configtable, char, START, GOAL, configtable.TimeOut)                              
+		numberOfPaths += 1
+		pathfinderModuleEvent.Event:Connect(function(result)
+			numberOfPaths -= 1
+			isCurrentlyPathing = false
+			--warn("Recieved from module")
+			if result == "Success" then
+				isCurrentlyPathing = false
+				--print("Success!")
+			elseif result == "Error" then
+				isCurrentlyPathing = false
+				--print("Error!")
+			end
+		end)
+	end
+end
+
+
