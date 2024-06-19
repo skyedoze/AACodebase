@@ -1,0 +1,156 @@
+local pathfinderModule = {}
+
+-- Quick-call variables
+local pathService = game:GetService("PathfindingService")
+local runService = game:GetService("RunService")
+
+-- Calling bindableEvent
+local pathfinderModuleEvent = game:GetService("ReplicatedStorage").Events.PathfinderModuleEvent_v1
+
+--[[ 
+Notes:
+
+Return of false means path failed
+Return of true means path success
+
+GOAL AND START IS ALWAYS A VECTOR3, NOT INSTANCE!
+Config is table
+
+]]
+
+function pathfinderModule.PathTo(CONFIG, CHAR, START, GOAL, TIMEOUT)
+	--warn("Recieved call!")
+	local path = pathService:CreatePath(CONFIG)
+	local reachedConnection
+	local blockedConnection
+	local hasReturnedValue = false
+	local startTime = tick()
+
+	local success, errorMessage
+	success, errorMessage = pcall(function()
+		--print("Continuing call!")
+		path:ComputeAsync(START, GOAL)
+	end)
+	--print(success)
+	if success then
+		--warn("Pathfind path compute success, confirming...")
+		if path.Status == Enum.PathStatus.Success then
+			--print("Pathfind compute success confirmed")
+			local wayPoints = path:GetWaypoints()
+			local currentWayPointIndex = 2
+			--print("Number of waypoints: ".. #wayPoints)
+			--print("Current waypoint: ".. currentWayPointIndex)
+
+			-- Visualise waypoint nodes
+			if #workspace.Waypoints:GetChildren() ~= 0 then
+				workspace.Waypoints:ClearAllChildren()
+			end
+
+			for i, v in pairs(wayPoints) do
+				local part = Instance.new("Part")
+				part.Shape = "Ball"
+				part.Material = "Neon"
+				part.Size = Vector3.new(0.6, 0.6, 0.6)
+				part.Position = v.Position
+				part.Anchored = true
+				part.CanCollide = false
+				part.Parent = workspace.Waypoints
+				part.Name = "Waypoint ".. i
+				if v.Action == Enum.PathWaypointAction.Jump then
+					part.Color = Color3.new(1, 1, 0)
+				elseif v.Action == Enum.PathWaypointAction.Custom then
+					part.Color = Color3.new(1, 0.333333, 0)
+				else
+					part.Color = Color3.new(0.333333, 0.666667, 0)
+				end
+				local highlight = Instance.new("Highlight")
+				highlight.Parent = part
+				highlight.FillColor = part.Color
+				highlight.FillTransparency = 0.5
+				highlight.OutlineColor = part.Color
+				highlight.Adornee = part
+			end
+
+			local function checkTimeout()
+				if tick() - startTime > TIMEOUT then
+					print("Pathfinding took too long, restarting...")
+					if reachedConnection then
+						reachedConnection:Disconnect()
+					end
+					hasReturnedValue = true
+					pathfinderModuleEvent:Fire("Error")
+				end
+			end
+
+			CHAR.Humanoid:MoveTo(wayPoints[currentWayPointIndex].Position) -- Kickstart Pathfind
+
+			if not reachedConnection then
+				reachedConnection = CHAR.Humanoid.MoveToFinished:Connect(function(reached)
+					--local distance = (CHAR.HumanoidRootPart.Position - wayPoints[currentWayPointIndex].Position).Magnitude
+					if reached and currentWayPointIndex < #wayPoints --[[and distance < 2]] then
+						currentWayPointIndex += 1
+
+						--print("Number of waypoints: ".. #wayPoints)
+						--print("Current waypoint: ".. currentWayPointIndex)
+
+						if wayPoints[currentWayPointIndex].Action == Enum.PathWaypointAction.Jump then
+							CHAR.Humanoid.Jump = true
+						end
+
+						CHAR.Humanoid:MoveTo(wayPoints[currentWayPointIndex].Position)
+
+						currentWayPointIndex += 1
+						if currentWayPointIndex >= #wayPoints and not hasReturnedValue then
+							hasReturnedValue = true
+							--warn("Path travelled!")
+							pathfinderModuleEvent:Fire("Success")
+						end
+
+						startTime = tick()
+
+						--[[if wayPoints[currentWayPointIndex].Action == Enum.PathWaypointAction.Jump then
+							CHAR.Humanoid.Jump = true
+						end
+						CHAR.Humanoid:MoveTo(wayPoints[currentWayPointIndex].Position)
+						CHAR.Humanoid.MoveToFinished:Wait()
+						wait(math.random(1, 3))
+						pathfinderModule.PathTo(CONFIG, CHAR, wayPoints[currentWayPointIndex].Position, GOAL)]]
+					else
+						--pathfinderModule.PathTo(CONFIG, CHAR, CHAR.HumanoidRootPart.Position, GOAL)
+					end
+				end)
+			end
+			runService.Heartbeat:Connect(function()
+				if not hasReturnedValue then
+					checkTimeout()
+				end
+			end)
+		else
+			hasReturnedValue = true
+			warn("Unknown error, could not confirm")
+			pathfinderModuleEvent:Fire("Error")
+			-- pathfinderModule.PathTo(CONFIG, CHAR, CHAR.HumanoidRootPart.Position, GOAL)
+			if CONFIG["AllowMoveToOverride"] == true then
+				warn("MoveTo Override Called!")
+				CHAR.Humanoid:MoveTo(GOAL)
+			end
+		end
+	elseif not success then
+		-- Return path error
+		hasReturnedValue = true
+		warn("Pathfind path computation error: ".. errorMessage)
+		pathfinderModuleEvent:Fire("Error")
+		-- pathfinderModule.PathTo(CONFIG, CHAR, CHAR.HumanoidRootPart.Position, GOAL)
+	else
+		if CONFIG["AllowMoveToOverride"] == true then
+			warn("MoveTo Override Called!")
+			CHAR.Humanoid:MoveTo(GOAL)
+		end
+		warn("Unknown error, could not confirm")
+		hasReturnedValue = true
+		pathfinderModuleEvent:Fire("Error")
+		-- pathfinderModule.PathTo(CONFIG, CHAR, CHAR.HumanoidRootPart.Position, GOAL)
+	end
+end
+
+return pathfinderModule
